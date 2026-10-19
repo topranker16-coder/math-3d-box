@@ -64,12 +64,33 @@ with col2:
           " 호스트(민준)는 질문과 구조적 허점을 찌르는 역할을 하고, 여성"
           " 호스트(서연)는 논리적 근거와 이론적 팩트를 바탕으로 명쾌하게 해설하는"
           " 역할을 맡는다.\n3. 반드시 모든 대사의 줄 시작을 [남성]: 또는 [여성]:"
-          " 형태로 작성할 것. (예: [남성]: 질문 내용 / [여성]: 답변 내용)"
+          " 형태로 작성할 것."
       ),
   )
 
 
-# 동기 방식으로 Edge TTS 오디오를 생성하는 함수 (파싱 강화)
+# 긴 문장을 안전하게 잘게 쪼개는 함수
+def split_text_into_chunks(text, max_length=150):
+  import re
+
+  # 마침표, 물음표, 느낌표 기준 분리
+  sentences = re.split(r"(?<=[.?!])\s+", text)
+  chunks = []
+  current_chunk = ""
+
+  for sentence in sentences:
+    if len(current_chunk) + len(sentence) <= max_length:
+      current_chunk += " " + sentence
+    else:
+      if current_chunk:
+        chunks.append(current_chunk.strip())
+      current_chunk = sentence
+  if current_chunk:
+    chunks.append(current_chunk.strip())
+  return chunks if chunks else [text]
+
+
+# 동기 방식으로 Edge TTS 오디오를 생성하는 함수 (문장 분할 적용)
 def generate_audio_sync(script_text, male_v, female_v):
   audio_files = []
   lines = script_text.split("\n")
@@ -79,7 +100,7 @@ def generate_audio_sync(script_text, male_v, female_v):
     if not line:
       continue
 
-    # 화자 태그 판별 및 텍스트 추출
+    # 화자 판별 및 텍스트 분리
     if line.startswith("[남성]") or line.startswith("남성:"):
       text = (
           line.replace("[남성]:", "")
@@ -97,20 +118,25 @@ def generate_audio_sync(script_text, male_v, female_v):
       )
       voice = female_v
     else:
-      # 태그가 누락된 경우 기본적으로 여성/남성 번갈아 처리하거나 건너뜀
       continue
 
     if not text:
       continue
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    temp_file.close()
+    # 너무 긴 문장은 안전하게 쪼개서 각각 TTS 생성 후 합침
+    text_chunks = split_text_into_chunks(text, max_length=120)
 
-    communicate = edge_tts.Communicate(text, voice)
-    import asyncio
+    for chunk in text_chunks:
+      if not chunk:
+        continue
+      temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+      temp_file.close()
 
-    asyncio.run(communicate.save(temp_file.name))
-    audio_files.append(temp_file.name)
+      communicate = edge_tts.Communicate(chunk, voice)
+      import asyncio
+
+      asyncio.run(communicate.save(temp_file.name))
+      audio_files.append(temp_file.name)
 
   combined_audio = b""
   for fpath in audio_files:
@@ -160,15 +186,17 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
   st.subheader("📝 각색된 대화 스크립트")
   st.markdown(script_result)
 
-  # 2단계: Edge TTS 음성 생성
+  # 2단계: Edge TTS 음성 생성 (분할 처리 적용)
   st.subheader("🎧 음성(TTS) 생성 결과")
-  with st.spinner("MS Edge 무료 음성 엔진으로 남녀 대화를 생성 중입니다..."):
+  with st.spinner(
+      "MS Edge 무료 음성 엔진으로 대화 오디오를 렌더링 중입니다..."
+  ):
     try:
       audio_bytes = generate_audio_sync(script_result, male_voice, female_voice)
 
       if audio_bytes:
         st.audio(audio_bytes, format="audio/mp3")
-        st.success("🎉 오디오 생성 완료! 비용 걱정 없이 들어보세요.")
+        st.success("🎉 오디오 생성 완료! 플레이 버튼을 눌러 들어보세요.")
       else:
         st.warning(
             "대본에서 화자 패턴([남성]/[여성])을 찾지 못했습니다. 다시"
