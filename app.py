@@ -63,26 +63,41 @@ with col2:
           " 금지한다. 첫 마디부터 바로 본론의 핵심 논점으로 진입할 것.\n2. 남성"
           " 호스트(민준)는 질문과 구조적 허점을 찌르는 역할을 하고, 여성"
           " 호스트(서연)는 논리적 근거와 이론적 팩트를 바탕으로 명쾌하게 해설하는"
-          " 역할을 맡는다.\n3. 모든 문장은 반드시 아래 형식 중 하나로만"
-          " 시작해야 한다. 다른 형식은 절대 허용하지 않는다:\n[남성]: 대사 내용\n[여성]:"
-          " 대사 내용"
+          " 역할을 맡는다.\n3. 반드시 모든 대사의 줄 시작을 [남성]: 또는 [여성]:"
+          " 형태로 작성할 것. (예: [남성]: 질문 내용 / [여성]: 답변 내용)"
       ),
   )
 
 
-# 동기 방식으로 Edge TTS 오디오를 생성하는 함수
-def generate_audio_sync(lines, male_v, female_v):
+# 동기 방식으로 Edge TTS 오디오를 생성하는 함수 (파싱 강화)
+def generate_audio_sync(script_text, male_v, female_v):
   audio_files = []
+  lines = script_text.split("\n")
 
   for line in lines:
     line = line.strip()
-    if line.startswith("[남성]"):
-      text = line.replace("[남성]:", "").replace("[남성]", "").strip()
+    if not line:
+      continue
+
+    # 화자 태그 판별 및 텍스트 추출
+    if line.startswith("[남성]") or line.startswith("남성:"):
+      text = (
+          line.replace("[남성]:", "")
+          .replace("[남성]", "")
+          .replace("남성:", "")
+          .strip()
+      )
       voice = male_v
-    elif line.startswith("[여성]"):
-      text = line.replace("[여성]:", "").replace("[여성]", "").strip()
+    elif line.startswith("[여성]") or line.startswith("여성:"):
+      text = (
+          line.replace("[여성]:", "")
+          .replace("[여성]", "")
+          .replace("여성:", "")
+          .strip()
+      )
       voice = female_v
     else:
+      # 태그가 누락된 경우 기본적으로 여성/남성 번갈아 처리하거나 건너뜀
       continue
 
     if not text:
@@ -116,7 +131,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색 (안내된 최신 gemini-3.8-flash 모델 적용)
+  # 1단계: Gemini 대본 각색
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
@@ -149,8 +164,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
   st.subheader("🎧 음성(TTS) 생성 결과")
   with st.spinner("MS Edge 무료 음성 엔진으로 남녀 대화를 생성 중입니다..."):
     try:
-      lines = script_result.split("\n")
-      audio_bytes = generate_audio_sync(lines, male_voice, female_voice)
+      audio_bytes = generate_audio_sync(script_result, male_voice, female_voice)
 
       if audio_bytes:
         st.audio(audio_bytes, format="audio/mp3")
