@@ -119,8 +119,8 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
   ):
     try:
       client = genai.Client(api_key=gemini_api_key)
-      response = client.models.generate_content(
-          model="gemini-3.8-flash",
+     response = client.models.generate_content(
+          model="gemini-1.5-flash",
           contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
           config=types.GenerateContentConfig(
               system_instruction=system_instruction, temperature=0.3
