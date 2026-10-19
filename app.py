@@ -1,168 +1,150 @@
+import os
+import requests
 import streamlit as st
-import numpy as np
-import plotly.graph_objects as go
-from collections import deque
+from google import genai
+from google.genai import types
 
-st.set_page_config(page_title="입체도형 전개도 3D 조립 교구", layout="wide")
+# 페이지 설정
+st.set_page_config(
+    page_title="맞춤형 AI 팟캐스트 제작기", page_icon="🎙️", layout="wide"
+)
 
-st.title("📦 2D 전개도 3D 정밀 조립 교구")
-st.write("2D 모눈종이에 칠한 면들이 실제 종이 상자처럼 변(Hinge)을 축으로 접히는 모습을 확인해 보세요!")
+st.title("🎙️ 잡담 없는 맞춤형 AI 팟캐스트 메이커")
+st.markdown(
+    "방송 대본이나 학습 노트를 입력하면 **잡담을 배제**하고 핵심만 짚어주는 남녀 2인 대화 스크립트로 각색한 뒤, 고품질 음성(TTS)으로 변환합니다."
+)
 
-col_left, col_right = st.columns([1, 1])
+# 사이드바 설정 (API 키 입력)
+with st.sidebar:
+  st.header("🔑 API 설정")
+  gemini_api_key = st.text_input("Gemini API Key", type="password")
+  eleven_api_key = st.text_input("ElevenLabs API Key", type="password")
 
-# 1. 2D 그리드 영역
-with col_left:
-    st.subheader("1단계: 2D 전개도 칠하기")
-    
-    grid_size = 4
-    if "grid" not in st.session_state:
-        st.session_state.grid = np.zeros((grid_size, grid_size), dtype=int)
+  st.markdown("---")
+  st.markdown("### 🗣️ ElevenLabs 목소리 ID 설정")
+  # 기본 목소리 ID (실제 사용하시는 계정의 Voice ID로 변경 가능합니다)
+  male_voice_id = st.text_input(
+      "남성 호스트 Voice ID", value="pNInz6obpgDQGcFmaJgB"
+  )  (Adam 등)
+  female_voice_id = st.text_input(
+      "여성 호스트 Voice ID", value="21m00Tcm4TlvDq8ikWAM"
+  )  (Rachel 등)
 
-    for r in range(grid_size):
-        cols = st.columns(grid_size)
-        for c in range(grid_size):
-            val = st.session_state.grid[r, c]
-            label = "🟦" if val == 1 else "⬜"
-            if cols[c].button(label, key=f"cell_{r}_{c}", use_container_width=True):
-                st.session_state.grid[r, c] = 1 - val
-                st.rerun()
+# 메인 입력 화면
+col1, col2 = st.columns(2)
 
-    if st.button("🔄 전개도 초기화", use_container_width=True):
-        st.session_state.grid = np.zeros((grid_size, grid_size), dtype=int)
-        st.rerun()
+with col1:
+  st.subheader("1. 원본 대본 또는 자료 입력")
+  source_text = st.text_area(
+      "팟캐스트로 만들고 싶은 방송 대본이나 텍스트를 입력하세요.",
+      height=300,
+      placeholder="여기에 대본을 붙여넣으세요...",
+  )
 
-    selected_cells = []
-    for r in range(grid_size):
-        for c in range(grid_size):
-            if st.session_state.grid[r, c] == 1:
-                selected_cells.append((r, c))
+with col2:
+  st.subheader("2. 대본 각색 설정 (프롬프트 규칙)")
+  system_instruction = st.text_area(
+      "AI 각색 지시어 (System Prompt)",
+      height=300,
+      value=(
+          "너는 전문 시사/학술 팟캐스트 작가다. 제공된 자료를 바탕으로 남녀 호스트가 주고받는"
+          " 2인 팟캐스트 대본을 작성하라.\n\n[규칙]\n1. 오프닝 멘트나 날씨 이야기 같은 무의미한"
+          " 잡담, 농담, 감탄사는 절대 금지한다. 첫 마디부터 바로 본론의 핵심 논점으로 진입할"
+          " 것.\n2. 남성 호스트(민준)는 질문과 구조적 허점을 찌르는 역할을 하고, 여성 호스트(서연)는"
+          " 논리적 근거와 이론적 팩트를 바탕으로 명쾌하게 해설하는 역할을 맡는다.\n3. 대화의 호흡은 빠르게"
+          " 가져가며, 반드시 제공된 텍스트/팩트에만 기반할 것.\n4. 출력 형식은 반드시 아래와 같이"
+          " 지정된 화자 이름으로 시작할 것:\n[남성]: ...\n[여성]: ..."
+      ),
+  )
 
-    st.info(f"현재 선택된 면: **{len(selected_cells)}개**")
+# 변환 실행 버튼
+if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="primary"):
+  if not gemini_api_key:
+    st.error("Gemini API Key를 입력해주세요.")
+    st.stop()
+  if not source_text.strip():
+    st.error("변환할 원본 텍스트를 입력해주세요.")
+    st.stop()
 
-# 2. 정밀 3D 조립 및 회전 알고리즘
-def get_3d_rotation(vertices, hinge_p1, hinge_p2, angle_rad):
-    u = hinge_p2 - hinge_p1
-    u = u / np.linalg.norm(u)
-    
-    ux, uy, uz = u
-    cos_a = np.cos(angle_rad)
-    sin_a = np.sin(angle_rad)
-    
-    R = np.array([
-        [cos_a + ux**2*(1-cos_a), ux*uy*(1-cos_a) - uz*sin_a, ux*uz*(1-cos_a) + uy*sin_a],
-        [uy*ux*(1-cos_a) + uz*sin_a, cos_a + uy**2*(1-cos_a), uy*uz*(1-cos_a) - ux*sin_a],
-        [uz*ux*(1-cos_a) - uy*sin_a, uz*uy*(1-cos_a) + ux*sin_a, cos_a + uz**2*(1-cos_a)]
-    ])
-    
-    rotated_verts = []
-    for v in vertices:
-        v_trans = v - hinge_p1
-        v_rot = np.dot(R, v_trans)
-        rotated_verts.append(v_rot + hinge_p1)
-        
-    return np.array(rotated_verts)
+  # 1단계: Gemini를 이용해 잡담 없는 대본 각색
+  with st.spinner("Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."):
+    try:
+      client = genai.Client(api_key=gemini_api_key)
+      response = client.models.generate_content(
+          model="gemini-2.5-flash",
+          contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
+          config=types.GenerateContentConfig(
+              system_instruction=system_instruction, temperature=0.3
+          ),
+      )
+      script_result = response.text
+    except Exception as e:
+      st.error(f"Gemini API 오류 발생: {e}")
+      st.stop()
 
-with col_right:
-    st.subheader("2단계: 3D 정밀 조립 시뮬레이션")
-    
-    fold_angle = st.slider("접는 각도 (0° = 평면, 90° = 직각 접힘)", 0, 90, 0, step=5)
-    
-    fig = go.Figure()
-    
-    if len(selected_cells) == 0:
-        st.warning("왼쪽 모눈종이에서 최소 1개 이상의 면을 선택해 주세요!")
-    else:
-        cell_set = set(selected_cells)
-        base_cell = selected_cells[0]
-        
-        tree = []
-        visited = {base_cell}
-        queue = deque([base_cell])
-        parent_map = {}
-        
-        while queue:
-            curr = queue.popleft()
-            r, c = curr
-            neighbors = [
-                ((r-1, c), 'UP'), ((r+1, c), 'DOWN'),
-                ((r, c-1), 'LEFT'), ((r, c+1), 'RIGHT')
-            ]
-            for nxt, dir_type in neighbors:
-                if nxt in cell_set and nxt not in visited:
-                    visited.add(nxt)
-                    parent_map[nxt] = (curr, dir_type)
-                    queue.append(nxt)
-                    tree.append((nxt, curr, dir_type))
+  st.subheader("📝 각색된 대화 스크립트")
+  st.markdown(script_result)
 
-        def get_initial_vertices(r, c):
-            return np.array([
-                [c, 3-r, 0],
-                [c+1, 3-r, 0],
-                [c+1, 4-r, 0],
-                [c, 4-r, 0]
-            ], dtype=float)
+  # 2단계: ElevenLabs 연동 (선택 사항)
+  if eleven_api_key:
+    st.subheader("🎧 음성(TTS) 생성 결과")
+    with st.spinner(
+        "ElevenLabs를 통해 남녀 대화 오디오를 렌더링 중입니다..."
+    ):
+      try:
+        # 간단한 파싱 예시 ([남성]: / [여성]: 턴을 나누어 처리)
+        lines = script_result.split("\n")
+        audio_segments = []
 
-        angle_rad = np.radians(fold_angle)
-        transformed_verts = {}
-        transformed_verts[base_cell] = get_initial_vertices(*base_cell)
-        
-        for child, parent, dir_type in tree:
-            p_verts = transformed_verts[parent]
-            if dir_type == 'UP':
-                hinge_p1, hinge_p2 = p_verts[3], p_verts[2]
-            elif dir_type == 'DOWN':
-                hinge_p1, hinge_p2 = p_verts[1], p_verts[0]
-            elif dir_type == 'LEFT':
-                hinge_p1, hinge_p2 = p_verts[0], p_verts[3]
-            elif dir_type == 'RIGHT':
-                hinge_p1, hinge_p2 = p_verts[2], p_verts[1]
+        for line in lines:
+          if line.startswith("[남성]"):
+            text_to_speak = line.replace("[남성]:", "").strip()
+            voice_id = male_voice_id
+          elif line.startswith("[여성]"):
+            text_to_speak = line.replace("[여성]:", "").strip()
+            voice_id = female_voice_id
+          else:
+            continue
 
-            c_verts = get_initial_vertices(*child)
-            rotated = get_3d_rotation(c_verts, hinge_p1, hinge_p2, angle_rad)
-            transformed_verts[child] = rotated
+          if not text_to_speak:
+            continue
 
-        mesh_x, mesh_y, mesh_z = [], [], []
-        i_list, j_list, k_list = [], [], []
-        vert_offset = 0
+          # ElevenLabs API 호출
+          url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+          headers = {
+              "Accept": "audio/mpeg",
+              "Content-Type": "application/json",
+              "xi-api-key": eleven_api_key,
+          }
+          data = {
+              "text": text_to_speak,
+              "model_id": "eleven_multilingual_v2",
+              "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+          }
 
-        for cell, verts in transformed_verts.items():
-            for v in verts:
-                mesh_x.append(v[0])
-                mesh_y.append(v[1])
-                mesh_z.append(v[2])
-            
-            i_list.extend([vert_offset, vert_offset])
-            j_list.extend([vert_offset+1, vert_offset+2])
-            k_list.extend([vert_offset+2, vert_offset+3])
-            vert_offset += 4
+          res = requests.post(url, json=data, headers=headers)
+          if res.status_code == 200:
+            audio_segments.append(res.content)
+          else:
+            st.warning(
+                f"음성 생성 실패 일부 구간 생략 (Status: {res.status_code})"
+            )
 
-            fig.add_trace(go.Scatter3d(
-                x=list(verts[:, 0]) + [verts[0, 0]],
-                y=list(verts[:, 1]) + [verts[0, 1]],
-                z=list(verts[:, 2]) + [verts[0, 2]],
-                mode='lines',
-                line=dict(color='darkblue', width=5),
-                showlegend=False
-            ))
+        # 오디오 세그먼트 합치기 (바이트 단위 결합)
+        if audio_segments:
+          full_audio_bytes = b"".join(audio_segments)
+          st.audio(full_audio_bytes, format="audio/mp3")
+          st.success("오디오 생성 완료! 플레이 버튼을 눌러 들어보세요.")
+        else:
+          st.warning(
+              "대본에서 화자 패턴([남성]/[여성])을 찾지 못해 음성을 생성하지"
+              " 못했습니다."
+          )
 
-        fig.add_trace(go.Mesh3d(
-            x=mesh_x, y=mesh_y, z=mesh_z,
-            i=i_list, j=j_list, k=k_list,
-            color='dodgerblue',
-            opacity=0.8,
-            flatshading=True,
-            name="면"
-        ))
-
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(range=[-1, 5], title="X"),
-            yaxis=dict(range=[-1, 5], title="Y"),
-            zaxis=dict(range=[-1, 5], title="Z"),
-            aspectmode='cube'
-        ),
-        margin=dict(l=0, r=0, b=0, t=0),
-        height=450
+      except Exception as e:
+        st.error(f"ElevenLabs API 연동 중 오류 발생: {e}")
+  else:
+    st.info(
+        "💡 ElevenLabs API 키를 입력하시면 음성(TTS) 오디오 파일까지 자동으로"
+        " 생성하실 수 있습니다."
     )
-
-    st.plotly_chart(fig, use_container_width=True)
