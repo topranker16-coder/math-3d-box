@@ -86,36 +86,45 @@ def extract_pdf_text(uploaded_file):
   return preprocess_text('\n\n'.join(full_text))
 
 
-# 3. 팟캐스트 대화 파싱 (2인 멀티 스피커 연동)
+# 3. Smart 팟캐스트 대화 파싱 (2인 멀티 스피커 및 자동 교체)
 def parse_podcast_dialogue(text, female_voice, male_voice):
-  lines = text.split('\n')
+  lines = [l.strip() for l in text.split('\n') if l.strip()]
   dialogue = []
   current_voice = female_voice
 
-  for line in lines:
-    line = line.strip()
-    if not line:
-      continue
+  female_pattern = (
+      r'^(\\[|\\()?\s*(진행자|MC|아나운서|질문|Q|User)\s*(\\]|\\))?\s*[:\.]?\s*'
+  )
+  male_pattern = (
+      r'^(\\[|\\()?\s*(전문가|소방기술사|답변|게스트|A|AI)\s*(\\]|\\))?\s*[:\.]?\s*'
+  )
 
-    # 팟캐스트 화자 교체 감지 ([진행자], [전문가] 등)
-    if any(
-        line.startswith(p)
-        for p in ['[진행자]', '[MC]', '[아나운서]', '[질문]', 'A:']
-    ):
+  # 대본 전체에 화자 태그([진행자], [전문가], Q:, A: 등)가 있는지 검사
+  has_speaker_tags = any(
+      re.search(female_pattern, l, re.IGNORECASE)
+      or re.search(male_pattern, l, re.IGNORECASE)
+      for l in lines
+  )
+
+  # 태그가 없으면 문단/줄 단위로 여성과 남성이 자동으로 교대
+  if not has_speaker_tags:
+    for idx, line in enumerate(lines):
+      v = female_voice if idx % 2 == 0 else male_voice
+      dialogue.append((v, line))
+    return dialogue
+
+  # 태그가 있으면 지정된 화자에 맞게 목소리 전환 및 태그 제거
+  for line in lines:
+    if re.search(female_pattern, line, re.IGNORECASE):
       current_voice = female_voice
-      content = re.sub(
-          r'^(\\[진행자\\]|\\[MC\\]|\\[아나운서\\]|\\[질문\\]|A:)\s*', '', line
-      )
-      dialogue.append((current_voice, content))
-    elif any(
-        line.startswith(p)
-        for p in ['[전문가]', '[소방기술사]', '[답변]', '[게스트]', 'B:']
-    ):
+      content = re.sub(female_pattern, '', line, flags=re.IGNORECASE)
+      if content:
+        dialogue.append((current_voice, content))
+    elif re.search(male_pattern, line, re.IGNORECASE):
       current_voice = male_voice
-      content = re.sub(
-          r'^(\\[전문가\\]|\\[소방기술사\\]|\\[답변\\]|\\[게스트\\]|B:)\s*', '', line
-      )
-      dialogue.append((current_voice, content))
+      content = re.sub(male_pattern, '', line, flags=re.IGNORECASE)
+      if content:
+        dialogue.append((current_voice, content))
     else:
       dialogue.append((current_voice, line))
 
@@ -151,8 +160,9 @@ script_text = ''
 
 with tab1:
   st.info(
-      '💡 **2인 팟캐스트 팁**: 문장 앞에 `[진행자]`, `[전문가]`를 붙이면 남녀'
-      ' 목소리가 자동으로 교체됩니다!'
+      '💡 **2인 팟캐스트 팁**: 문장 앞에 `[진행자]`, `[전문가]` (또는 `질문:`, `답변:`)를'
+      ' 붙이시면 더 정확하게 대화가 구분됩니다. 태그가 없어도 문단별로 알아서'
+      ' 번갈아가며 읽어 드립니다!'
   )
   user_input = st.text_area(
       '📋 팟캐스트/오디오북 대본:',
