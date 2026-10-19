@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
@@ -125,6 +124,3 @@ with col_right:
     )
 
     st.plotly_chart(fig, use_container_width=True)
-```
-
----
