@@ -93,10 +93,10 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
   current_voice = female_voice
 
   female_pattern = (
-      r'^(\\[|\\()?\s*(진행자|MC|아나운서|질문|Q|User)\s*(\\]|\\))?\s*[:\.]?\s*'
+      r'^\s*(\\[|\\()? *(진행자|MC|아나운서|질문|Q|User) *(\\]|\\))? *[:\.]? *'
   )
   male_pattern = (
-      r'^(\\[|\\()?\s*(전문가|소방기술사|답변|게스트|A|AI)\s*(\\]|\\))?\s*[:\.]?\s*'
+      r'^\s*(\\[|\\()? *(전문가|소방기술사|답변|게스트|A|AI) *(\\]|\\))? *[:\.]? *'
   )
 
   # 대본 전체에 화자 태그([진행자], [전문가], Q:, A: 등)가 있는지 검사
