@@ -116,7 +116,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색 (안내된 gemini-3.8-flash 모델 적용)
+  # 1단계: Gemini 대본 각색 (안정적인 gemini-2.0-flash 모델 적용)
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
@@ -126,7 +126,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     for attempt in range(3):
       try:
         response = client.models.generate_content(
-            model="gemini-3.8-flash",
+            model="gemini-2.0-flash",
             contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction, temperature=0.3
