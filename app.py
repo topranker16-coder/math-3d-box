@@ -24,7 +24,9 @@ def preprocess_text(raw_text):
   text = re.sub(
       r'Page\s*\d+(\s*of\s*\d+)?', '', text, flags=re.IGNORECASE
   )
-  text = re.sub(r'\\(\s*\d+\s*-\s*\d+\s*\\)', '', text)  # ( 6-1 ) 형태 시험지 번호
+  text = re.sub(
+      r'[\\(\\[]\s*\d+\s*-\s*\d+\s*[\\)\\]]', '', text
+  )  # ( 6-1 ) 형태 시험지 번호
 
   # 공고 및 법령 부칙 행정 문구 제거
   text = re.sub(r'\\[시행\s*\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.\\]', '', text)
@@ -75,7 +77,57 @@ def preprocess_text(raw_text):
   return text
 
 
-# 2. PDF 텍스트 추출
+# 2. 대용량 텍스트 분할 함수 (WebSocket 타임아웃/NoAudioReceived 방지)
+def split_text_into_chunks(text, max_chars=800):
+  text = text.strip()
+  if not text:
+    return []
+
+  if len(text) <= max_chars:
+    return [text]
+
+  sentences = re.split(r'(?<=[.!?\n])\s+', text)
+  chunks = []
+  current_chunk = ''
+
+  for sentence in sentences:
+    sentence = sentence.strip()
+    if not sentence:
+      continue
+    if len(current_chunk) + len(sentence) + 1 <= max_chars:
+      current_chunk = (
+          (current_chunk + ' ' + sentence).strip()
+          if current_chunk
+          else sentence
+      )
+    else:
+      if current_chunk:
+        chunks.append(current_chunk)
+      if len(sentence) > max_chars:
+        words = sentence.split()
+        sub_chunk = ''
+        for word in words:
+          if len(sub_chunk) + len(word) + 1 <= max_chars:
+            sub_chunk = (
+                (sub_chunk + ' ' + word).strip() if sub_chunk else word
+            )
+          else:
+            if sub_chunk:
+              chunks.append(sub_chunk)
+            sub_chunk = word
+        if sub_chunk:
+          chunks.append(sub_chunk)
+        current_chunk = ''
+      else:
+        current_chunk = sentence
+
+  if current_chunk:
+    chunks.append(current_chunk)
+
+  return chunks
+
+
+# 3. PDF 텍스트 추출
 def extract_pdf_text(uploaded_file):
   full_text = []
   with pdfplumber.open(uploaded_file) as pdf:
@@ -86,7 +138,7 @@ def extract_pdf_text(uploaded_file):
   return preprocess_text('\n\n'.join(full_text))
 
 
-# 3. Smart 팟캐스트 대화 파싱 (2인 멀티 스피커 및 자동 교체)
+# 4. Smart 팟캐스트 대화 파싱
 def parse_podcast_dialogue(text, female_voice, male_voice):
   lines = [l.strip() for l in text.split('\n') if l.strip()]
   dialogue = []
@@ -99,55 +151,70 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
       r'^\s*[\\(\\[]?\s*(전문가|소방기술사|답변|게스트|A|AI)\s*[\\)\\]]?\s*[:\.]?\s*'
   )
 
-  # 대본 전체에 화자 태그([진행자], [전문가], Q:, A: 등)가 있는지 검사
+  # 화자 태그 존재 여부 검사
   has_speaker_tags = any(
       re.search(female_pattern, l, re.IGNORECASE)
       or re.search(male_pattern, l, re.IGNORECASE)
       for l in lines
   )
 
-  # 태그가 없으면 문단/줄 단위로 여성과 남성이 자동으로 교대
+  # 태그가 없으면 릴레이 교대
   if not has_speaker_tags:
     for idx, line in enumerate(lines):
       v = female_voice if idx % 2 == 0 else male_voice
       cleaned_line = preprocess_text(line)
-      if cleaned_line:
+      if cleaned_line and re.search(r'[a-zA-Z0-9가-힣]', cleaned_line):
         dialogue.append((v, cleaned_line))
     return dialogue
 
-  # 태그가 있으면 지정된 화자에 맞게 목소리 전환 및 태그 제거
+  # 태그가 있으면 구분
   for line in lines:
     if re.search(female_pattern, line, re.IGNORECASE):
       current_voice = female_voice
       content = re.sub(female_pattern, '', line, flags=re.IGNORECASE)
       content = preprocess_text(content)
-      if content:
+      if content and re.search(r'[a-zA-Z0-9가-힣]', content):
         dialogue.append((current_voice, content))
     elif re.search(male_pattern, line, re.IGNORECASE):
       current_voice = male_voice
       content = re.sub(male_pattern, '', line, flags=re.IGNORECASE)
       content = preprocess_text(content)
-      if content:
+      if content and re.search(r'[a-zA-Z0-9가-힣]', content):
         dialogue.append((current_voice, content))
     else:
       cleaned_content = preprocess_text(line)
-      if cleaned_content:
+      if cleaned_content and re.search(r'[a-zA-Z0-9가-힣]', cleaned_content):
         dialogue.append((current_voice, cleaned_content))
 
   return dialogue
 
 
-# 4. Async edge-tts 병합 생성
+# 5. Async edge-tts 안전 병합 및 재시도 생성
 async def generate_podcast_audio(dialogue, rate_str):
   combined_data = bytearray()
 
   for voice, chunk_text in dialogue:
-    if not chunk_text.strip():
-      continue
-    communicate = edge_tts.Communicate(chunk_text, voice, rate=rate_str)
-    async for chunk in communicate.stream():
-      if chunk['type'] == 'audio':
-        combined_data.extend(chunk['data'])
+    # 텍스트를 800자 단위 안전 청크로 분할
+    sub_chunks = split_text_into_chunks(chunk_text, max_chars=800)
+
+    for sub_text in sub_chunks:
+      if not re.search(r'[a-zA-Z0-9가-힣]', sub_text):
+        continue
+
+      # 최대 3회 재시도 (네트워크 패킷 유실 방지)
+      for attempt in range(3):
+        try:
+          communicate = edge_tts.Communicate(sub_text, voice, rate=rate_str)
+          success = False
+          async for chunk in communicate.stream():
+            if chunk['type'] == 'audio':
+              combined_data.extend(chunk['data'])
+              success = True
+          if success:
+            break
+        except Exception:
+          if attempt < 2:
+            await asyncio.sleep(0.5)
 
   return bytes(combined_data)
 
@@ -202,9 +269,16 @@ with col1:
       horizontal=True,
   )
 with col2:
-  speed = st.select_slider(
+  speed_choice = st.select_slider(
       '⚡ 낭독 속도:', options=['-10%', '-5%', '-3%', '0%', '+5%'], value='-3%'
   )
+
+# speed 포맷팅 안전성 보장 ("0%" -> "+0%")
+rate_str = (
+    speed_choice
+    if speed_choice.startswith(('-', '+'))
+    else f'+{speed_choice}'
+)
 
 female_v = 'ko-KR-SunHiNeural'
 male_v = 'ko-KR-InJoonNeural'
@@ -219,8 +293,15 @@ if st.button('🚀 팟캐스트 오디오 생성하기', type='primary'):
       else:
         dialogue = [(female_v, preprocess_text(script_text))]
 
-      audio_bytes = asyncio.run(generate_podcast_audio(dialogue, speed))
-      st.session_state['generated_audio'] = audio_bytes
+      audio_bytes = asyncio.run(generate_podcast_audio(dialogue, rate_str))
+
+      if not audio_bytes:
+        st.error(
+            '⚠️ 음성 생성에 실패했습니다. 대본에 유효한 한글/영문 텍스트가'
+            ' 포함되어 있는지 확인해 주세요.'
+        )
+      else:
+        st.session_state['generated_audio'] = audio_bytes
 
 if 'generated_audio' in st.session_state:
   st.success('🎉 팟캐스트 오디오북 생성 완료!')
