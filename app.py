@@ -1,34 +1,44 @@
+import asyncio
 import os
-import requests
-import streamlit as st
+import tempfile
+import edge_tts
 from google import genai
 from google.genai import types
+import streamlit as st
 
 # 페이지 설정
 st.set_page_config(
-    page_title="맞춤형 AI 팟캐스트 제작기", page_icon="🎙️", layout="wide"
+    page_title="100% 무료 맞춤형 AI 팟캐스트 제작기",
+    page_icon="🎙️",
+    layout="wide",
 )
 
-st.title("🎙️ 잡담 없는 맞춤형 AI 팟캐스트 메이커")
+st.title("🎙️ 잡담 없는 맞춤형 AI 팟캐스트 메이커 (100% 무료)")
 st.markdown(
-    "방송 대본이나 학습 노트를 입력하면 **잡담을 배제**하고 핵심만 짚어주는 남녀"
-    " 2인 대화 스크립트로 각색한 뒤, 고품질 음성(TTS)으로 변환합니다."
+    "방송 대본을 입력하면 **Gemini**가 핵심 대화 스크립트로 각색하고, **MS"
+    " Edge 무료 음성 엔진**이 남녀 대화 오디오로 즉시 변환해 드립니다."
 )
 
-# 사이드바 설정 (API 키 입력)
+# 사이드바 설정 (무료 Gemini API 키만 받음)
 with st.sidebar:
   st.header("🔑 API 설정")
-  gemini_api_key = st.text_input("Gemini API Key", type="password")
-  eleven_api_key = st.text_input("ElevenLabs API Key", type="password")
+  gemini_api_key = st.text_input("Gemini API Key (무료)", type="password")
+  st.info(
+      "💡 Gemini API 키 하나만 넣으면 끝납니다! 음성 생성(TTS)은 API 키가 전혀"
+      " 필요 없는 MS Edge 무료 음성을 사용합니다."
+  )
 
   st.markdown("---")
-  st.markdown("### 🗣️ ElevenLabs 목소리 ID 설정")
-  # 주석을 괄호 밖으로 완전히 분리하여 문법 오류 해결
-  male_voice_id = st.text_input(
-      "남성 호스트 Voice ID (예: Adam)", value="pNInz6obpgDQGcFmaJgB"
+  st.markdown("### 🗣️ 한국어 성우 선택")
+  male_voice = st.selectbox(
+      "남성 성우 목소리",
+      options=["ko-KR-InJoonNeural", "ko-KR-BongJinNeural"],
+      index=0,
   )
-  female_voice_id = st.text_input(
-      "여성 호스트 Voice ID (예: Rachel)", value="21m00Tcm4TlvDq8ikWAM"
+  female_voice = st.selectbox(
+      "여성 성우 목소리",
+      options=["ko-KR-SunHiNeural", "ko-KR-JiMinNeural"],
+      index=0,
   )
 
 # 메인 입력 화면
@@ -48,16 +58,51 @@ with col2:
       "AI 각색 지시어 (System Prompt)",
       height=300,
       value=(
-          "너는 전문 시사/학술 팟캐스트 작가다. 제공된 자료를 바탕으로 남녀 호스트가"
-          " 주고받는 2인 팟캐스트 대본을 작성하라.\n\n[규칙]\n1. 오프닝 멘트나 날씨"
-          " 이야기 같은 무의미한 잡담, 농담, 감탄사는 절대 금지한다. 첫 마디부터 바로"
-          " 본론의 핵심 논점으로 진입할 것.\n2. 남성 호스트(민준)는 질문과 구조적 허점을"
-          " 찌르는 역할을 하고, 여성 호스트(서연)는 논리적 근거와 이론적 팩트를 바탕으로"
-          " 명쾌하게 해설하는 역할을 맡는다.\n3. 대화의 호흡은 빠르게 가져가며, 반드시"
-          " 제공된 텍스트/팩트에만 기반할 것.\n4. 출력 형식은 반드시 아래와 같이 지정된"
-          " 화자 이름으로 시작할 것:\n[남성]: ...\n[여성]: ..."
+          "너는 전문 시사/학술 팟캐스트 작가다. 제공된 자료를 바탕으로 남녀"
+          " 호스트가 주고받는 2인 팟캐스트 대본을 작성하라.\n\n[규칙]\n1."
+          " 오프닝 멘트나 날씨 이야기 같은 무의미한 잡담, 농담, 감탄사는 절대"
+          " 금지한다. 첫 마디부터 바로 본론의 핵심 논점으로 진입할 것.\n2. 남성"
+          " 호스트(민준)는 질문과 구조적 허점을 찌르는 역할을 하고, 여성"
+          " 호스트(서연)는 논리적 근거와 이론적 팩트를 바탕으로 명쾌하게 해설하는"
+          " 역할을 맡는다.\n3. 대화의 호흡은 빠르게 가져가며, 반드시 제공된"
+          " 텍스트/팩트에만 기반할 것.\n4. 출력 형식은 반드시 아래와 같이"
+          " 지정된 화자 이름으로 시작할 것:\n[남성]: ...\n[여성]: ..."
       ),
   )
+
+
+# Edge TTS 비동기 생성 함수
+async def generate_dialogue_audio(lines, male_v, female_v):
+  audio_files = []
+
+  for line in lines:
+    if line.startswith("[남성]"):
+      text = line.replace("[남성]:", "").strip()
+      voice = male_v
+    elif line.startswith("[여성]"):
+      text = line.replace("[여성]:", "").strip()
+      voice = female_v
+    else:
+      continue
+
+    if not text:
+      continue
+
+    # 임시 음성 파일 생성
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(temp_file.name)
+    audio_files.append(temp_file.name)
+
+  # 생성된 음성 파일들을 하나의 바이트로 결합
+  combined_audio = b""
+  for fpath in audio_files:
+    with open(fpath, "rb") as f:
+      combined_audio += f.read()
+    os.remove(fpath)  # 임시파일 삭제
+
+  return combined_audio
+
 
 # 변환 실행 버튼
 if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="primary"):
@@ -68,7 +113,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini를 이용해 잡담 없는 대본 각색
+  # 1단계: Gemini 대본 각색
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
@@ -89,66 +134,24 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
   st.subheader("📝 각색된 대화 스크립트")
   st.markdown(script_result)
 
-  # 2단계: ElevenLabs 연동 (선택 사항)
-  if eleven_api_key:
-    st.subheader("🎧 음성(TTS) 생성 결과")
-    with st.spinner(
-        "ElevenLabs를 통해 남녀 대화 오디오를 렌더링 중입니다..."
-    ):
-      try:
-        # 간단한 파싱 예시 ([남성]: / [여성]: 턴을 나누어 처리)
-        lines = script_result.split("\n")
-        audio_segments = []
+  # 2단계: Edge TTS 무료 음성 생성
+  st.subheader("🎧 음성(TTS) 생성 결과")
+  with st.spinner("MS Edge 무료 음성 엔진으로 남녀 대화를 생성 중입니다..."):
+    try:
+      lines = script_result.split("\n")
+      # asyncio 이벤트 루프 실행
+      audio_bytes = asyncio.run(
+          generate_dialogue_audio(lines, male_voice, female_voice)
+      )
 
-        for line in lines:
-          if line.startswith("[남성]"):
-            text_to_speak = line.replace("[남성]:", "").strip()
-            voice_id = male_voice_id
-          elif line.startswith("[여성]"):
-            text_to_speak = line.replace("[여성]:", "").strip()
-            voice_id = female_voice_id
-          else:
-            continue
+      if audio_bytes:
+        st.audio(audio_bytes, format="audio/mp3")
+        st.success("🎉 오디오 생성 완료! 비용 걱정 없이 들어보세요.")
+      else:
+        st.warning(
+            "대본에서 화자 패턴([남성]/[여성])을 찾지 못해 음성을 생성하지"
+            " 못했습니다."
+        )
 
-          if not text_to_speak:
-            continue
-
-          # ElevenLabs API 호출
-          url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-          headers = {
-              "Accept": "audio/mpeg",
-              "Content-Type": "application/json",
-              "xi-api-key": eleven_api_key,
-          }
-          data = {
-              "text": text_to_speak,
-              "model_id": "eleven_multilingual_v2",
-              "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
-          }
-
-          res = requests.post(url, json=data, headers=headers)
-          if res.status_code == 200:
-            audio_segments.append(res.content)
-          else:
-            st.warning(
-                f"음성 생성 실패 일부 구간 생략 (Status: {res.status_code})"
-            )
-
-        # 오디오 세그먼트 합치기 (바이트 단위 결합)
-        if audio_segments:
-          full_audio_bytes = b"".join(audio_segments)
-          st.audio(full_audio_bytes, format="audio/mp3")
-          st.success("오디오 생성 완료! 플레이 버튼을 눌러 들어보세요.")
-        else:
-          st.warning(
-              "대본에서 화자 패턴([남성]/[여성])을 찾지 못해 음성을 생성하지"
-              " 못했습니다."
-          )
-
-      except Exception as e:
-        st.error(f"ElevenLabs API 연동 중 오류 발생: {e}")
-  else:
-    st.info(
-        "💡 ElevenLabs API 키를 입력하시면 음성(TTS) 오디오 파일까지 자동으로"
-        " 생성하실 수 있습니다."
-    )
+    except Exception as e:
+      st.error(f"음성 생성 중 오류 발생: {e}")
