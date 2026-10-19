@@ -93,10 +93,10 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
   current_voice = female_voice
 
   female_pattern = (
-      r'^\s*(\\[|\\()? *(진행자|MC|아나운서|질문|Q|User) *(\\]|\\))? *[:\.]? *'
+      r'^\s*[\\[\\(]?\s*(진행자|MC|아나운서|질문|Q|User)\s*[\\]\\)]?\s*[:\.]?\s*'
   )
   male_pattern = (
-      r'^\s*(\\[|\\()? *(전문가|소방기술사|답변|게스트|A|AI) *(\\]|\\))? *[:\.]? *'
+      r'^\s*[\\[\\(]?\s*(전문가|소방기술사|답변|게스트|A|AI)\s*[\\]\\)]?\s*[:\.]?\s*'
   )
 
   # 대본 전체에 화자 태그([진행자], [전문가], Q:, A: 등)가 있는지 검사
@@ -110,7 +110,9 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
   if not has_speaker_tags:
     for idx, line in enumerate(lines):
       v = female_voice if idx % 2 == 0 else male_voice
-      dialogue.append((v, line))
+      cleaned_line = preprocess_text(line)
+      if cleaned_line:
+        dialogue.append((v, cleaned_line))
     return dialogue
 
   # 태그가 있으면 지정된 화자에 맞게 목소리 전환 및 태그 제거
@@ -118,15 +120,19 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
     if re.search(female_pattern, line, re.IGNORECASE):
       current_voice = female_voice
       content = re.sub(female_pattern, '', line, flags=re.IGNORECASE)
+      content = preprocess_text(content)
       if content:
         dialogue.append((current_voice, content))
     elif re.search(male_pattern, line, re.IGNORECASE):
       current_voice = male_voice
       content = re.sub(male_pattern, '', line, flags=re.IGNORECASE)
+      content = preprocess_text(content)
       if content:
         dialogue.append((current_voice, content))
     else:
-      dialogue.append((current_voice, line))
+      cleaned_content = preprocess_text(line)
+      if cleaned_content:
+        dialogue.append((current_voice, cleaned_content))
 
   return dialogue
 
