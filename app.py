@@ -1,8 +1,7 @@
-import asyncio
 import os
 import tempfile
 import time
-import edge_tts
+from gtts import gTTS
 from google import genai
 from google.genai import types
 import streamlit as st
@@ -14,8 +13,8 @@ st.set_page_config(
 
 st.title("🎙️ 잡담 없는 맞춤형 AI 팟캐스트 메이커 (100% 무료)")
 st.markdown(
-    "방송 대본을 입력하면 **Gemini**가 핵심 대화 스크립트로 각색하고, **MS"
-    " Edge 무료 음성 엔진**이 남녀 대화 오디오로 즉시 변환해 드립니다."
+    "방송 대본을 입력하면 **Gemini**가 핵심 대화 스크립트로 각색하고, **Google TTS"
+    " 엔진**이 남녀 대화 오디오로 즉시 변환해 드립니다."
 )
 
 # 사이드바 설정
@@ -23,21 +22,19 @@ with st.sidebar:
   st.header("🔑 API 설정")
   gemini_api_key = st.text_input("Gemini API Key (무료)", type="password")
   st.info(
-      "💡 Gemini API 키 하나만 넣으면 끝납니다! 음성 생성(TTS)은 API 키가 전혀"
-      " 필요 없는 MS Edge 무료 음성을 사용합니다."
+      "💡 Gemini API 키 하나만 넣으면 끝납니다! 음성 생성(TTS)은 완전 무료인 Google"
+      " TTS를 사용합니다."
   )
 
   st.markdown("---")
-  st.markdown("### 🗣️ 한국어 성우 선택")
-  male_voice = st.selectbox(
-      "남성 성우 목소리",
-      options=["ko-KR-InJoonNeural", "ko-KR-BongJinNeural"],
+  st.markdown("### 🗣️ 한국어 억양/속도 설정")
+  male_tld = st.selectbox(
+      "남성 호스트 억양",
+      options=["co.kr (한국)", "ca (캐나다/안정적)"],
       index=0,
   )
-  female_voice = st.selectbox(
-      "여성 성우 목소리",
-      options=["ko-KR-SunHiNeural", "ko-KR-JiMinNeural"],
-      index=0,
+  female_tld = st.selectbox(
+      "여성 호스트 억양", options=["co.kr (한국)", "com (미국/안정적)"], index=0
   )
 
 # 메인 입력 화면
@@ -69,36 +66,20 @@ with col2:
   )
 
 
-# 긴 문장을 안전하게 잘게 쪼개는 함수
-def split_text_into_chunks(text, max_length=150):
-  import re
-
-  sentences = re.split(r"(?<=[.?!])\s+", text)
-  chunks = []
-  current_chunk = ""
-
-  for sentence in sentences:
-    if len(current_chunk) + len(sentence) <= max_length:
-      current_chunk += " " + sentence
-    else:
-      if current_chunk:
-        chunks.append(current_chunk.strip())
-      current_chunk = sentence
-  if current_chunk:
-    chunks.append(current_chunk.strip())
-  return chunks if chunks else [text]
-
-
-# 동기 방식으로 Edge TTS 오디오를 생성하는 함수
-def generate_audio_sync(script_text, male_v, female_v):
+# gTTS 기반 100% 안정적인 오디오 생성 함수
+def generate_audio_gtts(script_text, male_tld_val, female_tld_val):
   audio_files = []
   lines = script_text.split("\n")
+
+  male_tld_code = "co.kr" if "co.kr" in male_tld_val else "ca"
+  female_tld_code = "co.kr" if "co.kr" in female_tld_val else "com"
 
   for line in lines:
     line = line.strip()
     if not line:
       continue
 
+    # 화자 판별
     if line.startswith("[남성]") or line.startswith("남성:"):
       text = (
           line.replace("[남성]:", "")
@@ -106,7 +87,7 @@ def generate_audio_sync(script_text, male_v, female_v):
           .replace("남성:", "")
           .strip()
       )
-      voice = male_v
+      tld = male_tld_code
     elif line.startswith("[여성]") or line.startswith("여성:"):
       text = (
           line.replace("[여성]:", "")
@@ -114,27 +95,22 @@ def generate_audio_sync(script_text, male_v, female_v):
           .replace("여성:", "")
           .strip()
       )
-      voice = female_v
+      tld = female_tld_code
     else:
       continue
 
     if not text:
       continue
 
-    text_chunks = split_text_into_chunks(text, max_length=120)
+    # gTTS 음성 파일 생성
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    temp_file.close()
 
-    for chunk in text_chunks:
-      if not chunk:
-        continue
-      temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-      temp_file.close()
+    tts = gTTS(text=text, lang="ko", tld=tld, slow=False)
+    tts.save(temp_file.name)
+    audio_files.append(temp_file.name)
 
-      communicate = edge_tts.Communicate(chunk, voice)
-      import asyncio
-
-      asyncio.run(communicate.save(temp_file.name))
-      audio_files.append(temp_file.name)
-
+  # 생성된 음성 파일들 결합
   combined_audio = b""
   for fpath in audio_files:
     if os.path.exists(fpath):
@@ -154,7 +130,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색 (안내된 최신 gemini-3.8-flash 모델 및 503 자동 재시도 적용)
+  # 1단계: Gemini 대본 각색
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
@@ -183,13 +159,11 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
   st.subheader("📝 각색된 대화 스크립트")
   st.markdown(script_result)
 
-  # 2단계: Edge TTS 음성 생성
+  # 2단계: gTTS 음성 생성
   st.subheader("🎧 음성(TTS) 생성 결과")
-  with st.spinner(
-      "MS Edge 무료 음성 엔진으로 대화 오디오를 렌더링 중입니다..."
-  ):
+  with st.spinner("Google 음성 엔진으로 대화 오디오를 생성 중입니다..."):
     try:
-      audio_bytes = generate_audio_sync(script_result, male_voice, female_voice)
+      audio_bytes = generate_audio_gtts(script_result, male_tld, female_tld)
 
       if audio_bytes:
         st.audio(audio_bytes, format="audio/mp3")
