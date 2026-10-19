@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import time
 import edge_tts
 from google import genai
 from google.genai import types
@@ -17,7 +18,7 @@ st.markdown(
     " Edge 무료 음성 엔진**이 남녀 대화 오디오로 즉시 변환해 드립니다."
 )
 
-# 사이드바 설정 (무료 Gemini API 키만 받음)
+# 사이드바 설정
 with st.sidebar:
   st.header("🔑 API 설정")
   gemini_api_key = st.text_input("Gemini API Key (무료)", type="password")
@@ -115,23 +116,31 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색 (과부하가 적고 안정적인 gemini-1.5-flash 적용)
+  # 1단계: Gemini 대본 각색 (503 과부하 예외 처리 자동 재시도 로직 포함)
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
-    try:
-      client = genai.Client(api_key=gemini_api_key)
-      response = client.models.generate_content(
-          model="gemini-1.5-flash",
-          contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
-          config=types.GenerateContentConfig(
-              system_instruction=system_instruction, temperature=0.3
-          ),
-      )
-      script_result = response.text
-    except Exception as e:
-      st.error(f"Gemini API 오류 발생: {e}")
-      st.stop()
+    script_result = None
+    client = genai.Client(api_key=gemini_api_key)
+
+    for attempt in range(3):  # 최대 3회 재시도
+      try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction, temperature=0.3
+            ),
+        )
+        script_result = response.text
+        break  # 성공 시 반복문 탈출
+      except Exception as e:
+        if "503" in str(e) and attempt < 2:
+          time.sleep(2)  # 서버 과부하 시 2초 대기 후 재시도
+          continue
+        else:
+          st.error(f"Gemini API 오류 발생: {e}")
+          st.stop()
 
   st.subheader("📝 각색된 대화 스크립트")
   st.markdown(script_result)
