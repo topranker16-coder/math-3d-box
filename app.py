@@ -1,11 +1,12 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
+from collections import deque
 
 st.set_page_config(page_title="입체도형 전개도 3D 조립 교구", layout="wide")
 
-st.title("📦 2D 전개도 3D 인터랙티브 조립 교구")
-st.write("2D 모눈종이에 칠한 면들이 3D 공간 상에서 실제로 접히는 모습을 확인해 보세요!")
+st.title("📦 2D 전개도 3D 정밀 조립 교구")
+st.write("2D 모눈종이에 칠한 면들이 실제 종이 상자처럼 변(Hinge)을 축으로 접히는 모습을 확인해 보세요!")
 
 col_left, col_right = st.columns([1, 1])
 
@@ -30,7 +31,6 @@ with col_left:
         st.session_state.grid = np.zeros((grid_size, grid_size), dtype=int)
         st.rerun()
 
-    # 선택된 면 좌표 추출 (행 r, 열 c)
     selected_cells = []
     for r in range(grid_size):
         for c in range(grid_size):
@@ -39,84 +39,126 @@ with col_left:
 
     st.info(f"현재 선택된 면: **{len(selected_cells)}개**")
 
-# 2. 3D 시뮬레이션 및 폴딩 계산 엔진
-with col_right:
-    st.subheader("2단계: 3D 조립 시뮬레이션")
+# 2. 정밀 3D 조립 및 회전 알고리즘
+def get_3d_rotation(vertices, hinge_p1, hinge_p2, angle_rad):
+    u = hinge_p2 - hinge_p1
+    u = u / np.linalg.norm(u)
     
-    fold_angle = st.slider("접는 각도 (0° = 평면, 90° = 완전 접힘)", 0, 90, 0, step=5)
+    ux, uy, uz = u
+    cos_a = np.cos(angle_rad)
+    sin_a = np.sin(angle_rad)
+    
+    R = np.array([
+        [cos_a + ux**2*(1-cos_a), ux*uy*(1-cos_a) - uz*sin_a, ux*uz*(1-cos_a) + uy*sin_a],
+        [uy*ux*(1-cos_a) + uz*sin_a, cos_a + uy**2*(1-cos_a), uy*uz*(1-cos_a) - ux*sin_a],
+        [uz*ux*(1-cos_a) - uy*sin_a, uz*uy*(1-cos_a) + ux*sin_a, cos_a + uz**2*(1-cos_a)]
+    ])
+    
+    rotated_verts = []
+    for v in vertices:
+        v_trans = v - hinge_p1
+        v_rot = np.dot(R, v_trans)
+        rotated_verts.append(v_rot + hinge_p1)
+        
+    return np.array(rotated_verts)
+
+with col_right:
+    st.subheader("2단계: 3D 정밀 조립 시뮬레이션")
+    
+    fold_angle = st.slider("접는 각도 (0° = 평면, 90° = 직각 접힘)", 0, 90, 0, step=5)
     
     fig = go.Figure()
     
     if len(selected_cells) == 0:
         st.warning("왼쪽 모눈종이에서 최소 1개 이상의 면을 선택해 주세요!")
     else:
-        # 가장 첫 번째 선택된 칸을 기준(바닥면)으로 설정
-        base_r, base_c = selected_cells[0]
-        angle_rad = np.radians(fold_angle)
+        cell_set = set(selected_cells)
+        base_cell = selected_cells[0]
         
-        # 3D 렌더링용 데이터
+        tree = []
+        visited = {base_cell}
+        queue = deque([base_cell])
+        parent_map = {}
+        
+        while queue:
+            curr = queue.popleft()
+            r, c = curr
+            neighbors = [
+                ((r-1, c), 'UP'), ((r+1, c), 'DOWN'),
+                ((r, c-1), 'LEFT'), ((r, c+1), 'RIGHT')
+            ]
+            for nxt, dir_type in neighbors:
+                if nxt in cell_set and nxt not in visited:
+                    visited.add(nxt)
+                    parent_map[nxt] = (curr, dir_type)
+                    queue.append(nxt)
+                    tree.append((nxt, curr, dir_type))
+
+        def get_initial_vertices(r, c):
+            return np.array([
+                [c, 3-r, 0],
+                [c+1, 3-r, 0],
+                [c+1, 4-r, 0],
+                [c, 4-r, 0]
+            ], dtype=float)
+
+        angle_rad = np.radians(fold_angle)
+        transformed_verts = {}
+        transformed_verts[base_cell] = get_initial_vertices(*base_cell)
+        
+        for child, parent, dir_type in tree:
+            p_verts = transformed_verts[parent]
+            if dir_type == 'UP':
+                hinge_p1, hinge_p2 = p_verts[3], p_verts[2]
+            elif dir_type == 'DOWN':
+                hinge_p1, hinge_p2 = p_verts[1], p_verts[0]
+            elif dir_type == 'LEFT':
+                hinge_p1, hinge_p2 = p_verts[0], p_verts[3]
+            elif dir_type == 'RIGHT':
+                hinge_p1, hinge_p2 = p_verts[2], p_verts[1]
+
+            c_verts = get_initial_vertices(*child)
+            rotated = get_3d_rotation(c_verts, hinge_p1, hinge_p2, angle_rad)
+            transformed_verts[child] = rotated
+
         mesh_x, mesh_y, mesh_z = [], [], []
         i_list, j_list, k_list = [], [], []
         vert_offset = 0
 
-        for r, c in selected_cells:
-            # 기준점 대비 상대적 위치 연산
-            dr = r - base_r
-            dc = c - base_c
+        for cell, verts in transformed_verts.items():
+            for v in verts:
+                mesh_x.append(v[0])
+                mesh_y.append(v[1])
+                mesh_z.append(v[2])
             
-            # 접힘 로직 모사 (기준면 주변의 면들이 각도에 맞춰 z축 방향으로 올려짐)
-            if dr == 0 and dc == 0:
-                # 바닥 기준 면
-                x = [c, c+1, c+1, c]
-                y = [3-r, 3-r, 4-r, 4-r]
-                z = [0, 0, 0, 0]
-            else:
-                # 주변 면들의 3D 폴딩 꺾임 매핑
-                dist = abs(dr) + abs(dc)
-                z_lift = np.sin(angle_rad) * min(dist, 1.0)
-                shrink = 1.0 - (1.0 - np.cos(angle_rad)) * min(dist, 1.0)
-                
-                x = [c, c+shrink, c+shrink, c]
-                y = [3-r, 3-r, 4-r, 4-r]
-                z = [z_lift, z_lift, z_lift, z_lift]
-
-            # 3D 메시 꼭짓점 추가
-            mesh_x.extend(x)
-            mesh_y.extend(y)
-            mesh_z.extend(z)
-            
-            # 사각형 면을 2개 삼각형 폴리곤으로 매핑
             i_list.extend([vert_offset, vert_offset])
             j_list.extend([vert_offset+1, vert_offset+2])
             k_list.extend([vert_offset+2, vert_offset+3])
             vert_offset += 4
 
-        # 3D 면(Mesh3d) 추가
+            fig.add_trace(go.Scatter3d(
+                x=list(verts[:, 0]) + [verts[0, 0]],
+                y=list(verts[:, 1]) + [verts[0, 1]],
+                z=list(verts[:, 2]) + [verts[0, 2]],
+                mode='lines',
+                line=dict(color='darkblue', width=5),
+                showlegend=False
+            ))
+
         fig.add_trace(go.Mesh3d(
             x=mesh_x, y=mesh_y, z=mesh_z,
             i=i_list, j=j_list, k=k_list,
-            color='royalblue',
-            opacity=0.85,
+            color='dodgerblue',
+            opacity=0.8,
             flatshading=True,
-            name="전개도 면"
+            name="면"
         ))
-
-        # 테두리 선(Wireframe) 추가
-        for idx in range(0, len(mesh_x), 4):
-            fig.add_trace(go.Scatter3d(
-                x=mesh_x[idx:idx+4] + [mesh_x[idx]],
-                y=mesh_y[idx:idx+4] + [mesh_y[idx]],
-                z=mesh_z[idx:idx+4] + [mesh_z[idx]],
-                mode='lines',
-                line=dict(color='darkblue', width=4),
-                showlegend=False
-            ))
 
     fig.update_layout(
         scene=dict(
             xaxis=dict(range=[-1, 5], title="X"),
             yaxis=dict(range=[-1, 5], title="Y"),
-            zaxis=dict(range=[-1, 4], title="Z"),
+            zaxis=dict(range=[-1, 5], title="Z"),
             aspectmode='cube'
         ),
         margin=dict(l=0, r=0, b=0, t=0),
