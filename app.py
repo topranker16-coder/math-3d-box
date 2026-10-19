@@ -109,7 +109,7 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
       dialogue.append((current_voice, content))
     elif any(
         line.startswith(p)
-        for p in ['[전문가]', '[소방기술사]', '[답변]', '[게스트]', 'B:']:
+        for p in ['[전문가]', '[소방기술사]', '[답변]', '[게스트]', 'B:']
     ):
       current_voice = male_voice
       content = re.sub(
