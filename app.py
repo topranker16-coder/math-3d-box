@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 import edge_tts
@@ -68,7 +69,7 @@ with col2:
   )
 
 
-# 동기 방식으로 Edge TTS 오디오를 생성하는 함수 (하얀 화면 에러 원인 차단)
+# 동기 방식으로 Edge TTS 오디오를 생성하는 함수
 def generate_audio_sync(lines, male_v, female_v):
   audio_files = []
 
@@ -85,19 +86,15 @@ def generate_audio_sync(lines, male_v, female_v):
     if not text:
       continue
 
-    # 임시 파일 생성 후 동기 방식으로 저장
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     temp_file.close()
 
-    # edge_tts의 sync 방식 통신
     communicate = edge_tts.Communicate(text, voice)
-    # asyncio run을 함수 내부에서 안전하게 1회성으로 처리
     import asyncio
 
     asyncio.run(communicate.save(temp_file.name))
     audio_files.append(temp_file.name)
 
-  # 바이트 데이터로 결합
   combined_audio = b""
   for fpath in audio_files:
     if os.path.exists(fpath):
@@ -117,14 +114,14 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색
+  # 1단계: Gemini 대본 각색 (모델명을 gemini-2.0-flash로 설정)
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
     try:
       client = genai.Client(api_key=gemini_api_key)
       response = client.models.generate_content(
-          model="gemini-1.5-flash",
+          model="gemini-2.0-flash",
           contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
           config=types.GenerateContentConfig(
               system_instruction=system_instruction, temperature=0.3
