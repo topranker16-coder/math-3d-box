@@ -154,17 +154,17 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색 (안정적인 gemini-2.5-flash 모델 및 자동 재시도 로직 적용)
+  # 1단계: Gemini 대본 각색 (안내된 최신 gemini-3.8-flash 모델 및 503 자동 재시도 적용)
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
     script_result = None
     client = genai.Client(api_key=gemini_api_key)
 
-    for attempt in range(5):  # 최대 5회까지 자동 재시도
+    for attempt in range(5):
       try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction, temperature=0.3
@@ -174,7 +174,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
         break
       except Exception as e:
         if "503" in str(e) and attempt < 4:
-          time.sleep(3)  # 503 발생 시 3초 대기 후 재시도
+          time.sleep(3)
           continue
         else:
           st.error(f"Gemini API 오류 발생: {e}")
