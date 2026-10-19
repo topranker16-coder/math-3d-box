@@ -24,7 +24,7 @@ def preprocess_text(raw_text):
   text = re.sub(
       r'Page\s*\d+(\s*of\s*\d+)?', '', text, flags=re.IGNORECASE
   )
-  text = re.sub(r'\\(\s*\d+\s*-\s*\d+\s*\\)', '', text)
+  text = re.sub(r'\\(\s*\d+\s*-\s*\d+\s*\\)', '', text)  # ( 6-1 ) 형태 시험지 번호
 
   # 공고 및 법령 부칙 행정 문구 제거
   text = re.sub(r'\\[시행\s*\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.\\]', '', text)
@@ -93,10 +93,10 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
   current_voice = female_voice
 
   female_pattern = (
-      r'^\s*[\\[\\(]?\s*(진행자|MC|아나운서|질문|Q|User)\s*[\\]\\)]?\s*[:\.]?\s*'
+      r'^\s*[\\(\\[]?\s*(진행자|MC|아나운서|질문|Q|User)\s*[\\)\\]]?\s*[:\.]?\s*'
   )
   male_pattern = (
-      r'^\s*[\\[\\(]?\s*(전문가|소방기술사|답변|게스트|A|AI)\s*[\\]\\)]?\s*[:\.]?\s*'
+      r'^\s*[\\(\\[]?\s*(전문가|소방기술사|답변|게스트|A|AI)\s*[\\)\\]]?\s*[:\.]?\s*'
   )
 
   # 대본 전체에 화자 태그([진행자], [전문가], Q:, A: 등)가 있는지 검사
