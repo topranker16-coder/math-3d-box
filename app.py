@@ -73,7 +73,6 @@ with col2:
 def split_text_into_chunks(text, max_length=150):
   import re
 
-  # 마침표, 물음표, 느낌표 기준 분리
   sentences = re.split(r"(?<=[.?!])\s+", text)
   chunks = []
   current_chunk = ""
@@ -90,7 +89,7 @@ def split_text_into_chunks(text, max_length=150):
   return chunks if chunks else [text]
 
 
-# 동기 방식으로 Edge TTS 오디오를 생성하는 함수 (문장 분할 적용)
+# 동기 방식으로 Edge TTS 오디오를 생성하는 함수
 def generate_audio_sync(script_text, male_v, female_v):
   audio_files = []
   lines = script_text.split("\n")
@@ -100,7 +99,6 @@ def generate_audio_sync(script_text, male_v, female_v):
     if not line:
       continue
 
-    # 화자 판별 및 텍스트 분리
     if line.startswith("[남성]") or line.startswith("남성:"):
       text = (
           line.replace("[남성]:", "")
@@ -123,7 +121,6 @@ def generate_audio_sync(script_text, male_v, female_v):
     if not text:
       continue
 
-    # 너무 긴 문장은 안전하게 쪼개서 각각 TTS 생성 후 합침
     text_chunks = split_text_into_chunks(text, max_length=120)
 
     for chunk in text_chunks:
@@ -157,17 +154,17 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색
+  # 1단계: Gemini 대본 각색 (안정적인 gemini-2.5-flash 모델 및 자동 재시도 로직 적용)
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
     script_result = None
     client = genai.Client(api_key=gemini_api_key)
 
-    for attempt in range(3):
+    for attempt in range(5):  # 최대 5회까지 자동 재시도
       try:
         response = client.models.generate_content(
-            model="gemini-3.8-flash",
+            model="gemini-2.5-flash",
             contents=f"다음 텍스트를 바탕으로 대본을 만들어줘:\n\n{source_text}",
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction, temperature=0.3
@@ -176,8 +173,8 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
         script_result = response.text
         break
       except Exception as e:
-        if "503" in str(e) and attempt < 2:
-          time.sleep(2)
+        if "503" in str(e) and attempt < 4:
+          time.sleep(3)  # 503 발생 시 3초 대기 후 재시도
           continue
         else:
           st.error(f"Gemini API 오류 발생: {e}")
@@ -186,7 +183,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
   st.subheader("📝 각색된 대화 스크립트")
   st.markdown(script_result)
 
-  # 2단계: Edge TTS 음성 생성 (분할 처리 적용)
+  # 2단계: Edge TTS 음성 생성
   st.subheader("🎧 음성(TTS) 생성 결과")
   with st.spinner(
       "MS Edge 무료 음성 엔진으로 대화 오디오를 렌더링 중입니다..."
