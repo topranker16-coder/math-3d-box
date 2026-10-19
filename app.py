@@ -62,9 +62,9 @@ with col2:
           " 금지한다. 첫 마디부터 바로 본론의 핵심 논점으로 진입할 것.\n2. 남성"
           " 호스트(민준)는 질문과 구조적 허점을 찌르는 역할을 하고, 여성"
           " 호스트(서연)는 논리적 근거와 이론적 팩트를 바탕으로 명쾌하게 해설하는"
-          " 역할을 맡는다.\n3. 대화의 호흡은 빠르게 가져가며, 반드시 제공된"
-          " 텍스트/팩트에만 기반할 것.\n4. 출력 형식은 반드시 아래와 같이"
-          " 지정된 화자 이름으로 시작할 것:\n[남성]: ...\n[여성]: ..."
+          " 역할을 맡는다.\n3. 모든 문장은 반드시 아래 형식 중 하나로만"
+          " 시작해야 한다. 다른 형식은 절대 허용하지 않는다:\n[남성]: 대사 내용\n[여성]:"
+          " 대사 내용"
       ),
   )
 
@@ -74,11 +74,12 @@ def generate_audio_sync(lines, male_v, female_v):
   audio_files = []
 
   for line in lines:
+    line = line.strip()
     if line.startswith("[남성]"):
-      text = line.replace("[남성]:", "").strip()
+      text = line.replace("[남성]:", "").replace("[남성]", "").strip()
       voice = male_v
     elif line.startswith("[여성]"):
-      text = line.replace("[여성]:", "").strip()
+      text = line.replace("[여성]:", "").replace("[여성]", "").strip()
       voice = female_v
     else:
       continue
@@ -114,7 +115,7 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
     st.error("변환할 원본 텍스트를 입력해주세요.")
     st.stop()
 
-  # 1단계: Gemini 대본 각색 (에러 화면에서 요구한 gemini-3.8-flash 적용)
+  # 1단계: Gemini 대본 각색
   with st.spinner(
       "Gemini가 잡담을 배제하고 밀도 높은 대화 대본으로 각색 중입니다..."
   ):
@@ -147,8 +148,8 @@ if st.button("🚀 팟캐스트 대본 생성 및 오디오 제작", type="prima
         st.success("🎉 오디오 생성 완료! 비용 걱정 없이 들어보세요.")
       else:
         st.warning(
-            "대본에서 화자 패턴([남성]/[여성])을 찾지 못해 음성을 생성하지"
-            " 못했습니다."
+            "대본에서 화자 패턴([남성]/[여성])을 찾지 못했습니다. 다시"
+            " 시도해주세요."
         )
 
     except Exception as e:
