@@ -138,10 +138,14 @@ def extract_pdf_text(uploaded_file):
   return preprocess_text('\n\n'.join(full_text))
 
 
-# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완전 감지 및 정밀 제거)
-FEMALE_TAG_PATTERN = r'^\s*(?:[\\(\\[]\s*(?:진행자|MC|아나운서|질문|Q|User)\s*[\\)\\]]\s*:?|(?:진행자|MC|아나운서|질문|Q|User)\s*[:\.]\s*)\s*'
-MALE_TAG_PATTERN = r'^\s*(?:[\\(\\[]\s*(?:전문가|소방기술사|답변|게스트|A|AI)\s*[\\)\\]]\s*:?|(?:전문가|소방기술사|답변|게스트|A|AI)\s*[:\.]\s*)\s*'
-ANY_TAG_PATTERN = r'(?:[\\(\\[]\s*(?:진행자|전문가|MC|소방기술사|아나운서|게스트|질문|답변|Q|A|User|AI)\s*[\\)\\]]\s*:?|(?:진행자|전문가|MC|소방기술사|아나운서|게스트|질문|답변|Q|A|User|AI)\s*[:\.]\s*)'
+# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완벽 제거)
+FEMALE_KEYWORDS = r'진행자|MC|아나운서|질문|Q|User|여성'
+MALE_KEYWORDS = r'전문가|소방기술사|답변|게스트|A|AI|남성'
+
+FEMALE_TAG_PATTERN = (
+    rf'^\s*(?:\\[|\\()?({FEMALE_KEYWORDS})(?:\\]|\\))?\s*[:\.-]?\s*'
+)
+MALE_TAG_PATTERN = rf'^\s*(?:\\[|\\()?({MALE_KEYWORDS})(?:\\]|\\))?\s*[:\.-]?\s*'
 
 
 def parse_podcast_dialogue(text, female_voice, male_voice):
@@ -160,35 +164,27 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
   if not has_tags:
     for idx, line in enumerate(lines):
       v = female_voice if idx % 2 == 0 else male_voice
-      cleaned = re.sub(ANY_TAG_PATTERN, '', line, flags=re.IGNORECASE).strip()
-      cleaned = preprocess_text(cleaned)
+      cleaned = preprocess_text(line)
       if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
         dialogue.append((v, cleaned))
     return dialogue
 
-  # 태그가 있는 대본: 정확한 태그 제거 및 성우 분배
+  # 태그가 있는 대본: 태그 정밀 제거 및 성우 분배
   for line in lines:
     if re.search(FEMALE_TAG_PATTERN, line, re.IGNORECASE):
       current_voice = female_voice
-      cleaned = re.sub(FEMALE_TAG_PATTERN, '', line, flags=re.IGNORECASE)
-      cleaned = re.sub(
-          ANY_TAG_PATTERN, '', cleaned, flags=re.IGNORECASE
-      ).strip()
+      cleaned = re.sub(FEMALE_TAG_PATTERN, '', line, flags=re.IGNORECASE).strip()
       cleaned = preprocess_text(cleaned)
       if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
         dialogue.append((current_voice, cleaned))
     elif re.search(MALE_TAG_PATTERN, line, re.IGNORECASE):
       current_voice = male_voice
-      cleaned = re.sub(MALE_TAG_PATTERN, '', line, flags=re.IGNORECASE)
-      cleaned = re.sub(
-          ANY_TAG_PATTERN, '', cleaned, flags=re.IGNORECASE
-      ).strip()
+      cleaned = re.sub(MALE_TAG_PATTERN, '', line, flags=re.IGNORECASE).strip()
       cleaned = preprocess_text(cleaned)
       if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
         dialogue.append((current_voice, cleaned))
     else:
-      cleaned = re.sub(ANY_TAG_PATTERN, '', line, flags=re.IGNORECASE).strip()
-      cleaned = preprocess_text(cleaned)
+      cleaned = preprocess_text(line)
       if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
         dialogue.append((current_voice, cleaned))
 
