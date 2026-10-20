@@ -138,17 +138,17 @@ def extract_pdf_text(uploaded_file):
   return preprocess_text('\n\n'.join(full_text))
 
 
-# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완벽 감지 및 정밀 제거)
-FEMALE_KEYWORDS = r'진행자|MC|아나운서|질문|Q|User|여성'
-MALE_KEYWORDS = r'전문가|소방기술사|답변|게스트|A|AI|남성'
+# 4. Smart 팟캐스트 대화 파싱 (화자 태그/기호 완벽 제거)
+FEMALE_KEYWORDS = r'진행자|MC|아나운서|질문|Q|User|여성|F'
+MALE_KEYWORDS = r'전문가|소방기술사|답변|게스트|A|AI|남성|M'
 
 FEMALE_TAG_PATTERN = (
-    r'^\s*[\\(\\[]?\s*('
+    r'^\s*(?:[\\(\\[]\s*)?('
     + FEMALE_KEYWORDS
-    + r')\s*[\\)\\]]?\s*[:\.-]?\s*'
+    + r')\s*(?:[\\)\\]]\s*)?[:\.-]?\s*'
 )
 MALE_TAG_PATTERN = (
-    r'^\s*[\\(\\[]?\s*(' + MALE_KEYWORDS + r')\s*[\\)\\]]?\s*[:\.-]?\s*'
+    r'^\s*(?:[\\(\\[]\s*)?(' + MALE_KEYWORDS + r')\s*(?:[\\)\\]]\s*)?[:\.-]?\s*'
 )
 
 
@@ -228,8 +228,7 @@ async def generate_podcast_audio(dialogue, rate_str):
 # --- Streamlit UI ---
 st.title('🎙️ AI 소방 팟캐스트 & 오디오북 스튜디오')
 st.caption(
-    '1인 낭독 오디오북부터 [진행자]/[전문가] 2인 대화형 팟캐스트까지 자연스럽게'
-    ' 생성합니다.'
+    '1인 낭독 오디오북부터 2인 대화형 팟캐스트까지 자연스럽게 생성합니다.'
 )
 
 tab1, tab2 = st.tabs(
@@ -239,17 +238,16 @@ script_text = ''
 
 with tab1:
   st.info(
-      '💡 **2인 팟캐스트 팁**: 문장 앞에 `[진행자]`, `[전문가]` (또는 `질문:`, `답변:`)를'
-      ' 붙이시면 더 정확하게 대화가 구분됩니다. 태그가 없어도 문단별로 알아서'
-      ' 번갈아가며 읽어 드립니다!'
+      '💡 **2인 팟캐스트 팁**: 문장 앞에 `[진행자]`, `[전문가]` (또는 `Q:`, `A:`, `[F]`, `[M]`)를'
+      ' 붙이시면 해당 성우 목소리로 변환됩니다. 태그가 없어도 문단별로 알아서 번갈아가며'
+      ' 읽어 드립니다!'
   )
   user_input = st.text_area(
       '📋 팟캐스트/오디오북 대본:',
       height=280,
       placeholder=(
           '[진행자]: 안녕하세요! 오늘 알아볼 화재안전기준은 무엇인가요?\n[전문가]:'
-          ' 네, 오늘은 소화기구의 핵심 설치기준인 20미터와 30미터 보행거리에'
-          ' 대해 알아보겠습니다.'
+          ' 네, 오늘은 소화기구의 핵심 설치기준에 대해 알아보겠습니다.'
       ),
   )
   if user_input.strip():
@@ -316,3 +314,4 @@ if 'generated_audio' in st.session_state:
       data=st.session_state['generated_audio'],
       file_name='소방시설관리사_팟캐스트.mp3',
       mime='audio/mp3',
+  )
