@@ -138,14 +138,18 @@ def extract_pdf_text(uploaded_file):
   return preprocess_text('\n\n'.join(full_text))
 
 
-# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완벽 제거)
+# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완벽 감지 및 정밀 제거)
 FEMALE_KEYWORDS = r'진행자|MC|아나운서|질문|Q|User|여성'
 MALE_KEYWORDS = r'전문가|소방기술사|답변|게스트|A|AI|남성'
 
 FEMALE_TAG_PATTERN = (
-    rf'^\s*(?:\\[|\\()?({FEMALE_KEYWORDS})(?:\\]|\\))?\s*[:\.-]?\s*'
+    r'^\s*[\\(\\[]?\s*('
+    + FEMALE_KEYWORDS
+    + r')\s*[\\)\\]]?\s*[:\.-]?\s*'
 )
-MALE_TAG_PATTERN = rf'^\s*(?:\\[|\\()?({MALE_KEYWORDS})(?:\\]|\\))?\s*[:\.-]?\s*'
+MALE_TAG_PATTERN = (
+    r'^\s*[\\(\\[]?\s*(' + MALE_KEYWORDS + r')\s*[\\)\\]]?\s*[:\.-]?\s*'
+)
 
 
 def parse_podcast_dialogue(text, female_voice, male_voice):
@@ -173,7 +177,9 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
   for line in lines:
     if re.search(FEMALE_TAG_PATTERN, line, re.IGNORECASE):
       current_voice = female_voice
-      cleaned = re.sub(FEMALE_TAG_PATTERN, '', line, flags=re.IGNORECASE).strip()
+      cleaned = re.sub(
+          FEMALE_TAG_PATTERN, '', line, flags=re.IGNORECASE
+      ).strip()
       cleaned = preprocess_text(cleaned)
       if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
         dialogue.append((current_voice, cleaned))
@@ -310,4 +316,3 @@ if 'generated_audio' in st.session_state:
       data=st.session_state['generated_audio'],
       file_name='소방시설관리사_팟캐스트.mp3',
       mime='audio/mp3',
-  )
