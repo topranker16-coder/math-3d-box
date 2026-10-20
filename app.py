@@ -21,9 +21,7 @@ def preprocess_text(raw_text):
   # 헤더/푸터 및 쪽 번호 제거
   text = re.sub(r'한국산업인력공단|청렴\s*한\s*세상|안전\s*한\s*세상', '', text)
   text = re.sub(r'-\s*\d+\s*-', '', text)
-  text = re.sub(
-      r'Page\s*\d+(\s*of\s*\d+)?', '', text, flags=re.IGNORECASE
-  )
+  text = re.sub(r'Page\s*\d+(\s*of\s*\d+)?', '', text, flags=re.IGNORECASE)
   text = re.sub(
       r'[\\(\\[]\s*\d+\s*-\s*\d+\s*[\\)\\]]', '', text
   )  # ( 6-1 ) 형태 시험지 번호
@@ -138,28 +136,26 @@ def extract_pdf_text(uploaded_file):
   return preprocess_text('\n\n'.join(full_text))
 
 
-# 4. Smart 팟캐스트 대화 파싱
+# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완전 제거 및 멀티 스피커)
 def parse_podcast_dialogue(text, female_voice, male_voice):
-  lines = [l.strip() for l in text.split('\n') if l.strip()]
+  female_tag_pattern = (
+      r'[\\(\\[]?\s*(?:진행자|MC|아나운서|질문|Q|User)\s*[\\)\\]]?\s*[:\.]?'
+  )
+  male_tag_pattern = (
+      r'[\\(\\[]?\s*(?:전문가|소방기술사|답변|게스트|A|AI)\s*[\\)\\]]?\s*[:\.]?'
+  )
+  all_tags_pattern = (
+      r'(' + female_tag_pattern + r'|' + male_tag_pattern + r')'
+  )
+
+  # 대본 전체에 화자 태그가 포함되어 있는지 검사
+  has_tags = bool(re.search(all_tags_pattern, text, re.IGNORECASE))
+
   dialogue = []
-  current_voice = female_voice
 
-  female_pattern = (
-      r'^\s*[\\(\\[]?\s*(진행자|MC|아나운서|질문|Q|User)\s*[\\)\\]]?\s*[:\.]?\s*'
-  )
-  male_pattern = (
-      r'^\s*[\\(\\[]?\s*(전문가|소방기술사|답변|게스트|A|AI)\s*[\\)\\]]?\s*[:\.]?\s*'
-  )
-
-  # 화자 태그 존재 여부 검사
-  has_speaker_tags = any(
-      re.search(female_pattern, l, re.IGNORECASE)
-      or re.search(male_pattern, l, re.IGNORECASE)
-      for l in lines
-  )
-
-  # 태그가 없으면 릴레이 교대
-  if not has_speaker_tags:
+  # 태그가 없는 경우: 줄 단위로 여성/남성 릴레이 교대
+  if not has_tags:
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
     for idx, line in enumerate(lines):
       v = female_voice if idx % 2 == 0 else male_voice
       cleaned_line = preprocess_text(line)
@@ -167,24 +163,43 @@ def parse_podcast_dialogue(text, female_voice, male_voice):
         dialogue.append((v, cleaned_line))
     return dialogue
 
-  # 태그가 있으면 구분
-  for line in lines:
-    if re.search(female_pattern, line, re.IGNORECASE):
+  # 태그가 있는 경우: 태그 기준으로 텍스트 분할 및 태그 완전 제거
+  parts = re.split(all_tags_pattern, text, flags=re.IGNORECASE)
+
+  current_voice = female_voice
+  buffer_text = ''
+
+  female_re = re.compile(
+      r'^\s*' + female_tag_pattern + r'\s*\$', re.IGNORECASE
+  )
+  male_re = re.compile(r'^\s*' + male_tag_pattern + r'\s*\$', re.IGNORECASE)
+
+  for part in parts:
+    if not part:
+      continue
+
+    part_str = part.strip()
+    if female_re.match(part_str):
+      if buffer_text.strip():
+        cleaned = preprocess_text(buffer_text)
+        if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
+          dialogue.append((current_voice, cleaned))
+        buffer_text = ''
       current_voice = female_voice
-      content = re.sub(female_pattern, '', line, flags=re.IGNORECASE)
-      content = preprocess_text(content)
-      if content and re.search(r'[a-zA-Z0-9가-힣]', content):
-        dialogue.append((current_voice, content))
-    elif re.search(male_pattern, line, re.IGNORECASE):
+    elif male_re.match(part_str):
+      if buffer_text.strip():
+        cleaned = preprocess_text(buffer_text)
+        if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
+          dialogue.append((current_voice, cleaned))
+        buffer_text = ''
       current_voice = male_voice
-      content = re.sub(male_pattern, '', line, flags=re.IGNORECASE)
-      content = preprocess_text(content)
-      if content and re.search(r'[a-zA-Z0-9가-힣]', content):
-        dialogue.append((current_voice, content))
     else:
-      cleaned_content = preprocess_text(line)
-      if cleaned_content and re.search(r'[a-zA-Z0-9가-힣]', cleaned_content):
-        dialogue.append((current_voice, cleaned_content))
+      buffer_text += ' ' + part_str
+
+  if buffer_text.strip():
+    cleaned = preprocess_text(buffer_text)
+    if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
+      dialogue.append((current_voice, cleaned))
 
   return dialogue
 
@@ -194,14 +209,12 @@ async def generate_podcast_audio(dialogue, rate_str):
   combined_data = bytearray()
 
   for voice, chunk_text in dialogue:
-    # 텍스트를 800자 단위 안전 청크로 분할
     sub_chunks = split_text_into_chunks(chunk_text, max_chars=800)
 
     for sub_text in sub_chunks:
       if not re.search(r'[a-zA-Z0-9가-힣]', sub_text):
         continue
 
-      # 최대 3회 재시도 (네트워크 패킷 유실 방지)
       for attempt in range(3):
         try:
           communicate = edge_tts.Communicate(sub_text, voice, rate=rate_str)
@@ -273,7 +286,6 @@ with col2:
       '⚡ 낭독 속도:', options=['-10%', '-5%', '-3%', '0%', '+5%'], value='-3%'
   )
 
-# speed 포맷팅 안전성 보장 ("0%" -> "+0%")
 rate_str = (
     speed_choice
     if speed_choice.startswith(('-', '+'))
