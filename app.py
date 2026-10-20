@@ -21,7 +21,9 @@ def preprocess_text(raw_text):
   # 헤더/푸터 및 쪽 번호 제거
   text = re.sub(r'한국산업인력공단|청렴\s*한\s*세상|안전\s*한\s*세상', '', text)
   text = re.sub(r'-\s*\d+\s*-', '', text)
-  text = re.sub(r'Page\s*\d+(\s*of\s*\d+)?', '', text, flags=re.IGNORECASE)
+  text = re.sub(
+      r'Page\s*\d+(\s*of\s*\d+)?', '', text, flags=re.IGNORECASE
+  )
   text = re.sub(
       r'[\\(\\[]\s*\d+\s*-\s*\d+\s*[\\)\\]]', '', text
   )  # ( 6-1 ) 형태 시험지 번호
@@ -136,70 +138,59 @@ def extract_pdf_text(uploaded_file):
   return preprocess_text('\n\n'.join(full_text))
 
 
-# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완전 제거 및 멀티 스피커)
+# 4. Smart 팟캐스트 대화 파싱 (화자 태그 완전 감지 및 정밀 제거)
+FEMALE_TAG_PATTERN = r'^\s*(?:[\\(\\[]\s*(?:진행자|MC|아나운서|질문|Q|User)\s*[\\)\\]]\s*:?|(?:진행자|MC|아나운서|질문|Q|User)\s*[:\.]\s*)\s*'
+MALE_TAG_PATTERN = r'^\s*(?:[\\(\\[]\s*(?:전문가|소방기술사|답변|게스트|A|AI)\s*[\\)\\]]\s*:?|(?:전문가|소방기술사|답변|게스트|A|AI)\s*[:\.]\s*)\s*'
+ANY_TAG_PATTERN = r'(?:[\\(\\[]\s*(?:진행자|전문가|MC|소방기술사|아나운서|게스트|질문|답변|Q|A|User|AI)\s*[\\)\\]]\s*:?|(?:진행자|전문가|MC|소방기술사|아나운서|게스트|질문|답변|Q|A|User|AI)\s*[:\.]\s*)'
+
+
 def parse_podcast_dialogue(text, female_voice, male_voice):
-  female_tag_pattern = (
-      r'[\\(\\[]?\s*(?:진행자|MC|아나운서|질문|Q|User)\s*[\\)\\]]?\s*[:\.]?'
-  )
-  male_tag_pattern = (
-      r'[\\(\\[]?\s*(?:전문가|소방기술사|답변|게스트|A|AI)\s*[\\)\\]]?\s*[:\.]?'
-  )
-  all_tags_pattern = (
-      r'(' + female_tag_pattern + r'|' + male_tag_pattern + r')'
-  )
-
-  # 대본 전체에 화자 태그가 포함되어 있는지 검사
-  has_tags = bool(re.search(all_tags_pattern, text, re.IGNORECASE))
-
+  lines = [l.strip() for l in text.split('\n') if l.strip()]
   dialogue = []
+  current_voice = female_voice
 
-  # 태그가 없는 경우: 줄 단위로 여성/남성 릴레이 교대
+  # 대본 내 화자 태그 존재 여부 확인
+  has_tags = any(
+      re.search(FEMALE_TAG_PATTERN, l, re.IGNORECASE)
+      or re.search(MALE_TAG_PATTERN, l, re.IGNORECASE)
+      for l in lines
+  )
+
+  # 태그가 없는 대본: 문단별 릴레이 교대
   if not has_tags:
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
     for idx, line in enumerate(lines):
       v = female_voice if idx % 2 == 0 else male_voice
-      cleaned_line = preprocess_text(line)
-      if cleaned_line and re.search(r'[a-zA-Z0-9가-힣]', cleaned_line):
-        dialogue.append((v, cleaned_line))
+      cleaned = re.sub(ANY_TAG_PATTERN, '', line, flags=re.IGNORECASE).strip()
+      cleaned = preprocess_text(cleaned)
+      if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
+        dialogue.append((v, cleaned))
     return dialogue
 
-  # 태그가 있는 경우: 태그 기준으로 텍스트 분할 및 태그 완전 제거
-  parts = re.split(all_tags_pattern, text, flags=re.IGNORECASE)
-
-  current_voice = female_voice
-  buffer_text = ''
-
-  female_re = re.compile(
-      r'^\s*' + female_tag_pattern + r'\s*\$', re.IGNORECASE
-  )
-  male_re = re.compile(r'^\s*' + male_tag_pattern + r'\s*\$', re.IGNORECASE)
-
-  for part in parts:
-    if not part:
-      continue
-
-    part_str = part.strip()
-    if female_re.match(part_str):
-      if buffer_text.strip():
-        cleaned = preprocess_text(buffer_text)
-        if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
-          dialogue.append((current_voice, cleaned))
-        buffer_text = ''
+  # 태그가 있는 대본: 정확한 태그 제거 및 성우 분배
+  for line in lines:
+    if re.search(FEMALE_TAG_PATTERN, line, re.IGNORECASE):
       current_voice = female_voice
-    elif male_re.match(part_str):
-      if buffer_text.strip():
-        cleaned = preprocess_text(buffer_text)
-        if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
-          dialogue.append((current_voice, cleaned))
-        buffer_text = ''
+      cleaned = re.sub(FEMALE_TAG_PATTERN, '', line, flags=re.IGNORECASE)
+      cleaned = re.sub(
+          ANY_TAG_PATTERN, '', cleaned, flags=re.IGNORECASE
+      ).strip()
+      cleaned = preprocess_text(cleaned)
+      if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
+        dialogue.append((current_voice, cleaned))
+    elif re.search(MALE_TAG_PATTERN, line, re.IGNORECASE):
       current_voice = male_voice
+      cleaned = re.sub(MALE_TAG_PATTERN, '', line, flags=re.IGNORECASE)
+      cleaned = re.sub(
+          ANY_TAG_PATTERN, '', cleaned, flags=re.IGNORECASE
+      ).strip()
+      cleaned = preprocess_text(cleaned)
+      if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
+        dialogue.append((current_voice, cleaned))
     else:
-      buffer_text += ' ' + part_str
-
-  if buffer_text.strip():
-    cleaned = preprocess_text(buffer_text)
-    if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
-      dialogue.append((current_voice, cleaned))
+      cleaned = re.sub(ANY_TAG_PATTERN, '', line, flags=re.IGNORECASE).strip()
+      cleaned = preprocess_text(cleaned)
+      if cleaned and re.search(r'[a-zA-Z0-9가-힣]', cleaned):
+        dialogue.append((current_voice, cleaned))
 
   return dialogue
 
