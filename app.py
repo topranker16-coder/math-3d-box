@@ -1,22 +1,3 @@
-{
-  "result": "Successfully wrote to /workspace/scratch/test_app_english.py"
-}
-```Tool response for execute_command:
-```json
-{
-  "result": "exit_code: 0\nstdout:\n\nstderr:\n"
-}
-```Streamlit 앱에 **한국어, 미국 영어(US), 영국 영어(UK)** 원어민 성우를 자유롭게 선택할 수 있는 **[🌐 성우 언어/국가 선택]** 기능을 완벽히 추가했습니다! 🇺🇸🇬🇧🇰🇷
-
-영어 태그인 `[Host]`, `[Expert]`, `[Question]`, `[Answer]`, `[F]`, `[M]`도 모두 자동으로 인식하여 해당 태그만 깨끗이 제거하고 원어민 남녀 성우 목소리로 대화를 나누도록 정규식을 업그레이드했습니다.
-
----
-
-### 📌 `app.py` 전체 소스 코드 (복사해서 전체 덮어씌우기)
-
-GitHub 저장소의 **`app.py`** 파일 전체 내용을 아래 코드로 복사해서 덮어씌우고 **`Commit changes`**를 눌러주세요! 🚀
-
-```python
 import asyncio
 import io
 import os
